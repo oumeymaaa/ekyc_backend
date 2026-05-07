@@ -19,6 +19,7 @@ import { KycSession } from '../database/entities/kyc-session.entity';
 import { OcrService } from '../ocr/ocr.service';
 import { CreateKycSessionDto } from './dto/create-kyc-session.dto';
 import { UploadDocumentDto } from './dto/upload-document.dto';
+import { FaceExtractionService } from './face-extraction.service';
 
 type UploadDocumentResult = {
   document: KycDocument;
@@ -36,6 +37,7 @@ export class KycService {
     @InjectRepository(KycDocument)
     private readonly documentRepository: Repository<KycDocument>,
     private readonly ocrService: OcrService,
+    private readonly faceExtractionService: FaceExtractionService,
   ) {}
 
   createSession(dto: CreateKycSessionDto) {
@@ -95,8 +97,8 @@ export class KycService {
     const document = this.documentRepository.create({
       documentSide: dto.documentSide ?? 'front',
       fileSize: file.size,
-      frontendQualityScore: this.parseNumber(dto.qualityScore),
-      frontendQualityValid: this.parseBoolean(dto.qualityValid),
+      frontendQualityScore: this.parseNumber(dto.qualityScore) ?? 100,
+      frontendQualityValid: this.parseBoolean(dto.qualityValid) ?? true,
       imageHeight: this.parseNumber(dto.height),
       imageWidth: this.parseNumber(dto.width),
       mimeType: file.mimetype,
@@ -109,7 +111,7 @@ export class KycService {
       verificationStatus: DocumentVerificationStatus.PENDING,
     });
 
-    if (!document.frontendQualityValid) {
+    if (document.frontendQualityValid === false) {
       this.logger.warn(`Document rejected by frontend quality rules for session ${sessionId}`);
       document.processingStatus = DocumentProcessingStatus.SKIPPED;
       document.verificationStatus = DocumentVerificationStatus.REQUIRES_RETAKE;
@@ -174,13 +176,12 @@ export class KycService {
   }
 
   private parseBoolean(value?: string) {
+    if (value === undefined || value === null) return null;
     return value === 'true' || value === '1';
   }
 
   private parseNumber(value?: string) {
-    if (!value) {
-      return null;
-    }
+    if (value === undefined || value === null) return null;
 
     const parsed = Number(value);
     return Number.isNaN(parsed) ? null : parsed;
@@ -299,6 +300,79 @@ export class KycService {
 
     await mkdir(uploadDirectory, { recursive: true });
     await writeFile(targetPath, Buffer.from(processedImageBase64, 'base64'));
+
+    return targetPath;
+  }
+
+  async extractFaceFromDocument(
+    sessionId: string,
+    file: Express.Multer.File,
+  ) {
+    this.logger.log(
+      `Extracting face from document upload for session ${sessionId}`,
+    );
+
+    const storagePath = await this.persistDocumentFile(sessionId, file);
+
+    return this.performFaceExtraction(storagePath, file.mimetype);
+  }
+
+  async extractFaceFromStoredDocument(documentId: string) {
+    const document = await this.documentRepository.findOne({
+      where: { id: documentId },
+    });
+
+    if (!document) {
+      throw new NotFoundException(`Document ${documentId} not found`);
+    }
+
+    this.logger.log(`Extracting face from stored document ${documentId}`);
+
+    return this.performFaceExtraction(document.storagePath, document.mimeType);
+  }
+
+  private async performFaceExtraction(storagePath: string, mimeType: string) {
+    try {
+      const result = await this.faceExtractionService.extractFace(
+        storagePath,
+        mimeType,
+      );
+
+      if (result.success && result.face_base64) {
+        const faceImagePath = await this.persistFaceImage(
+          result.face_base64,
+        );
+
+        return {
+          success: true,
+          face_image_url: faceImagePath ? this.toPreviewUrl(faceImagePath) : null,
+          face_bbox: result.face_bbox,
+          quality_score: result.quality_score,
+          detection_method: result.detection_method,
+        };
+      }
+
+      return {
+        success: false,
+        error: 'Face extraction returned no result',
+      };
+    } catch (error) {
+      this.logger.error('Face extraction failed', error);
+      throw new BadRequestException('Face extraction failed');
+    }
+  }
+
+  private async persistFaceImage(faceBase64: string) {
+    if (!faceBase64) {
+      return null;
+    }
+
+    const uploadDirectory = join(process.cwd(), 'uploads', 'faces');
+    const fileName = `${randomUUID()}.jpg`;
+    const targetPath = join(uploadDirectory, fileName);
+
+    await mkdir(uploadDirectory, { recursive: true });
+    await writeFile(targetPath, Buffer.from(faceBase64, 'base64'));
 
     return targetPath;
   }
