@@ -9,6 +9,12 @@ import { KycDocument } from './database/entities/kyc-document.entity';
 import { KycSession } from './database/entities/kyc-session.entity';
 import { KycModule } from './kyc/kyc.module';
 import { OcrModule } from './ocr/ocr.module';
+import { AuthModule } from './auth/auth.module';
+import { UsersModule } from './users/users.module';
+import { RolesModule } from './roles/roles.module';
+import { MailModule } from './mail/mail.module';
+import { ClientsModule } from './clients/clients.module';
+import { KycRecordModule } from './kyc-record/kyc-record.module';
 
 @Module({
   imports: [
@@ -36,6 +42,12 @@ import { OcrModule } from './ocr/ocr.module';
     }),
     OcrModule,
     KycModule,
+    AuthModule,
+    UsersModule,
+    RolesModule,
+    MailModule,
+    ClientsModule,
+    KycRecordModule,
   ],
   controllers: [AppController],
   providers: [],
