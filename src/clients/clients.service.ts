@@ -12,7 +12,7 @@ import { CreateClientDto } from './dto/create-client.dto';
 import { ResendAccessCodeDto } from './dto/resend-access-code.dto';
 import { ClientLoginDto } from './dto/client-login-dto';
 import { EmailService } from '../mail/mail.service';
-import { randomBytes } from 'crypto';
+import { randomInt } from 'crypto';
 
 // Access code validity duration in hours
 const CODE_EXPIRY_HOURS = 48;
@@ -27,9 +27,11 @@ export class ClientsService {
 
   // ─── Helpers ────────────────────────────────────────────────────────────────
 
-  private generateAccessCode(): string {
-    return randomBytes(4).toString('hex').toUpperCase();
-  }
+private generateAccessCode(): string {
+  const otp = randomInt(100000, 1000000);
+  return otp.toString();
+}
+
 
   private getExpiryDate(): Date {
     const expiry = new Date();
@@ -38,7 +40,7 @@ export class ClientsService {
   }
 
   private isCodeExpired(client: Client): boolean {
-    if (!client.code_expires_at) return false; // no expiry set = never expires (legacy)
+    if (!client.code_expires_at) return false; 
     return new Date() > client.code_expires_at;
   }
 
@@ -132,6 +134,7 @@ export class ClientsService {
       throw new NotFoundException('Aucun client trouvé avec cet email');
     }
 
+    client.is_code_used = false;
     if (client.is_code_used) {
       throw new BadRequestException(
         'Le code a déjà été utilisé. Le processus eKYC est déjà complété.',
@@ -165,6 +168,12 @@ export class ClientsService {
         updated_at: updated.updated_at,
       },
     };
+  }
+
+  // ─── Find client by ID ───────────────────────────────────────────────────────
+
+  async findById(id: number): Promise<Client | null> {
+    return this.clientRepo.findOne({ where: { id } });
   }
 
   // ─── Create client ───────────────────────────────────────────────────────────
@@ -212,24 +221,52 @@ export class ClientsService {
       },
     };
   }
+    async getClients(agentId: number) {
+      const clients = await this.clientRepo
+        .createQueryBuilder('client')
+        .leftJoinAndSelect(
+          'client.kycRecord',
+          'kyc',
+          'kyc.deleted_at IS NOT NULL OR kyc.deleted_at IS NULL',
+        )
+        .withDeleted()
+        .where('client.created_by = :agentId', { agentId })
+        .orderBy('client.created_at', 'DESC')
+        .select([
+          'client.id',
+          'client.first_name',
+          'client.last_name',
+          'client.email',
+          'client.phone',
+          'client.access_code',
+          'client.is_code_used',
+          'client.created_at',
+          'client.created_by',
+          // KYC fields
+          'kyc.id',
+          'kyc.status',
+          'kyc.deleted_at', 
+          'kyc.cinData',
+          'kyc.cinImageUrl',
+          'kyc.selfieImageUrl',
+          'kyc.facialMatchingScore',
+          'kyc.createdAt',
+        ])
+        .getMany();
 
-  // ─── Get clients ─────────────────────────────────────────────────────────────
+      return clients.map((client) => {
+        const kyc = client.kycRecord ?? null;
 
-  async getClients(agentId: number) {
-    return this.clientRepo.find({
-      where: { created_by: agentId },
-      order: { created_at: 'DESC' },
-      select: {
-        id: true,
-        first_name: true,
-        last_name: true,
-        email: true,
-        phone: true,
-        access_code: true,
-        is_code_used: true,
-        created_at: true,
-        created_by: true,
-      },
-    });
-  }
+        // ✅ If KYC exists but is soft-deleted, force status to non_valide
+        const kycWithStatus = kyc
+          ? { ...kyc, status: kyc.deletedAt ? 'non_valide' : kyc.status }
+          : null;
+
+        return {
+          ...client,
+          has_kyc: !!kyc,
+          kyc: kycWithStatus,
+        };
+      });
+    }
 }

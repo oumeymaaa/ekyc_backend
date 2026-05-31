@@ -1,18 +1,53 @@
 // src/kyc-record/kyc-record.service.ts
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+
+import {
+  Injectable,
+  NotFoundException,
+  BadRequestException,
+  ConflictException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { KycRecord, KycStatus } from './kyc-record.entity';
+import { CreateKycRecordDto } from './dto/create-kyc-record.dto';
 import { KycFilterDto } from './dto/kyc-filter.dto';
 import { KycRecordResponseDto } from './dto/kyc-record-response.dto';
 import { UpdateKycStatusDto } from './dto/update-kyc-status.dto';
+import { ClientsService } from '../clients/clients.service';
 
 @Injectable()
 export class KycRecordService {
   constructor(
     @InjectRepository(KycRecord)
     private readonly kycRepo: Repository<KycRecord>,
+    private readonly clientService: ClientsService,
   ) {}
+
+  async createKycRecord(dto: CreateKycRecordDto): Promise<KycRecordResponseDto> {
+    const client = await this.clientService.findById(dto.clientId);
+    if (!client) {
+      throw new NotFoundException('Client non trouvé');
+    }
+
+    const existing = await this.kycRepo.findOne({
+      where: { client: { id: dto.clientId } },
+      withDeleted: true,
+    });
+    if (existing) {
+      throw new ConflictException('Un dossier KYC existe déjà pour ce client');
+    }
+
+    const record = new KycRecord();
+    record.client = client;
+    record.status = KycStatus.PENDING;
+    record.cinData = dto.cinData;
+    record.facialMatchingScore = dto.facialMatchingScore ?? null;
+    record.cinImageUrl = dto.cinImageUrl ?? null;
+    record.selfieImageUrl = dto.selfieImageUrl ?? null;
+
+    const saved = await this.kycRepo.save(record);
+    return this.toDto(saved);
+  }
 
   async findAllByAdmin(
     adminId: number,
@@ -29,12 +64,20 @@ export class KycRecordService {
       .createQueryBuilder('kyc')
       .leftJoinAndSelect('kyc.client', 'client')
       .where('client.created_by = :adminId', { adminId })
+      .withDeleted()
       .orderBy('kyc.createdAt', 'DESC')
       .skip((page - 1) * limit)
       .take(limit);
 
     if (status) {
-      qb.andWhere('kyc.status = :status', { status });
+      if (status === KycStatus.INVALID) {
+        // When filtering by non_valide: match both explicitly rejected
+        // AND soft-deleted (rejected + wiped) records
+        qb.andWhere('(kyc.status = :status OR kyc.deleted_at IS NOT NULL)', { status });
+      } else {
+        // For valide / en_attente: only active (non soft-deleted) rows
+        qb.andWhere('kyc.status = :status AND kyc.deleted_at IS NULL', { status });
+      }
     }
 
     const [records, total] = await qb.getManyAndCount();
@@ -47,22 +90,23 @@ export class KycRecordService {
     };
   }
 
-  // US8.2 — Get full client dossier by clientId
   async findOneByClientId(clientId: number): Promise<KycRecordResponseDto> {
     const record = await this.kycRepo.findOne({
       where: { client: { id: clientId } },
       relations: ['client'],
+      withDeleted: true,
     });
 
     if (!record) {
-      throw new NotFoundException(`KYC record not found for client ${clientId}`);
+      throw new NotFoundException(
+        `KYC record not found for client ${clientId}`,
+      );
     }
 
     return this.toDto(record);
   }
 
-  // US8.3 — Validate or reject a KYC dossier
-  async updateStatus(
+ async updateStatus(
     kycId: number,
     dto: UpdateKycStatusDto,
     agentId: number,
@@ -83,26 +127,47 @@ export class KycRecordService {
       );
     }
 
-    // Verify the agent owns this client (avoid cross-agent access)
+    // Verify ownership
     if (record.client.created_by !== agentId) {
       throw new NotFoundException(`KYC record not found`);
     }
 
+    // ✅ UPDATE STATUS
     record.status = dto.status;
     const updated = await this.kycRepo.save(record);
+    // ✅ IF REJECTED => resend access code + soft delete the KYC record
+    if (dto.status === KycStatus.INVALID) {
+      await this.clientService.resendAccessCode({
+        email: updated.client.email,
+        send_via: 1,
+      });
+      // Soft delete: sets deleted_at timestamp, row stays in DB
+      await this.kycRepo.softRemove(updated);
+    }
 
     const message =
       dto.status === KycStatus.VALID
         ? 'Dossier validé — identité acceptée'
-        : 'Dossier rejeté — identité refusée';
+        : 'Dossier rejeté — nouveau code envoyé';
 
-    return { message, data: this.toDto(updated) };
+    return {
+      message,
+      data: this.toDto(updated),
+    };
+  }
+  async restore(kycId: number): Promise<void> {
+    await this.kycRepo.restore(kycId);
   }
 
+  // ── DTO mapper ───────────────────────────────────────────────────────────
+  // A soft-deleted record has deletedAt set. We expose it as non_valide
+  // regardless of what the status column says, so the frontend always
+  // sees a consistent status value.
   private toDto(record: KycRecord): KycRecordResponseDto {
+    const status = record.deletedAt ? KycStatus.INVALID : record.status;
     return {
       id: record.id,
-      status: record.status,
+      status,
       cinData: record.cinData ?? null,
       cinImageUrl: record.cinImageUrl ?? null,
       selfieImageUrl: record.selfieImageUrl ?? null,

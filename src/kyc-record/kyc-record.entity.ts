@@ -4,6 +4,7 @@ import {
   PrimaryGeneratedColumn,
   Column,
   CreateDateColumn,
+  DeleteDateColumn,
   OneToOne,
   JoinColumn,
 } from 'typeorm';
@@ -20,7 +21,7 @@ export interface CinData {
   firstName: string;
   lastName: string;
   birthDate: string;
-  expiryDate: string;
+  lieu: string;
   address?: string;
 }
 
@@ -41,19 +42,21 @@ export class KycRecord {
   status: KycStatus;
 
   @Column({ type: 'float', nullable: true, name: 'facial_matching_score' })
-  facialMatchingScore: number;
+  facialMatchingScore: number | null;
 
   @Column({ type: 'jsonb', nullable: true, name: 'cin_data' })
   cinData: CinData;
 
-  // Path or URL of the scanned CIN document image
   @Column({ type: 'varchar', nullable: true, name: 'cin_image_url' })
-  cinImageUrl: string;
+  cinImageUrl: string | null;
 
-  // Path or URL of the client selfie image
   @Column({ type: 'varchar', nullable: true, name: 'selfie_image_url' })
-  selfieImageUrl: string;
+  selfieImageUrl: string | null;
 
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;
+
+  // ── Soft delete ──────────────────────────────────────────────────────────
+  @DeleteDateColumn({ name: 'deleted_at', nullable: true })
+  deletedAt: Date | null;
 }

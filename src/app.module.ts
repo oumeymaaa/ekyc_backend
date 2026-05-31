@@ -15,6 +15,7 @@ import { RolesModule } from './roles/roles.module';
 import { MailModule } from './mail/mail.module';
 import { ClientsModule } from './clients/clients.module';
 import { KycRecordModule } from './kyc-record/kyc-record.module';
+import { OrganisationsModule } from './organisation/organisations.module';
 
 @Module({
   imports: [
@@ -48,6 +49,7 @@ import { KycRecordModule } from './kyc-record/kyc-record.module';
     MailModule,
     ClientsModule,
     KycRecordModule,
+    OrganisationsModule
   ],
   controllers: [AppController],
   providers: [],

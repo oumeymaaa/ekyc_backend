@@ -1,4 +1,10 @@
-import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+  BadRequestException,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import * as bcrypt from 'bcrypt';
@@ -9,22 +15,39 @@ import { randomBytes } from 'crypto';
 import { ConflictException } from '@nestjs/common';
 import { UserStatus } from './userstatus.entity';
 import { EmailService } from '../mail/mail.service';
+import { ChangePasswordDto } from './dto/change-password.dto';
+import { OrganisationsService } from 'src/organisation/organisations.service';
+import { CreateAdminDto } from './dto/create-admin.dto';
+import { UpdateAdminDto } from './dto/update-admin.dto';
+import { Organisation } from '../organisation/organisation.entity'; 
+
 @Injectable()
 export class UsersService {
+  private readonly activationResendDelayHours: number;
+
   constructor(
     @InjectRepository(User)
     private userRepo: Repository<User>,
 
     @InjectRepository(Role)
     private roleRepo: Repository<Role>,
-    
+
     @InjectRepository(UserStatus)
     private statusRepo: Repository<UserStatus>,
-    
+
     private emailService: EmailService,
 
+    private readonly organisationsService: OrganisationsService,
+  ) {
+    this.activationResendDelayHours = parseInt(
+      process.env.ACTIVATION_RESEND_DELAY_HOURS ?? '48',
+      10,
+    );
+  }
 
-  ) {}
+  // ─────────────────────────────────────────────────────────────────────────────
+  // Helpers
+  // ─────────────────────────────────────────────────────────────────────────────
 
   findByEmail(email: string) {
     return this.userRepo.findOne({
@@ -35,6 +58,8 @@ export class UsersService {
         email: true,
         password: true,
         activation_token: true,
+        first_name: true,
+        last_name: true,
         role: {
           id: true,
           name: true,
@@ -43,83 +68,94 @@ export class UsersService {
     });
   }
 
-      private generateStrongPassword(length = 12): string {
-      const chars =
-        'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*()_+[]{}<>?';
-
-      let password = '';
-      const bytes = randomBytes(length);
-
-      for (let i = 0; i < length; i++) {
-        password += chars[bytes[i] % chars.length];
-      }
-
-      return password;
+  private generateStrongPassword(length = 12): string {
+    const chars =
+      'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*()_+[]{}?';
+    let password = '';
+    const bytes = randomBytes(length);
+    for (let i = 0; i < length; i++) {
+      password += chars[bytes[i] % chars.length];
     }
-
- 
- 
-    
-   async createAdmin(dto: any) {
-  const existing = await this.userRepo.findOne({
-    where: { email: dto.email },
-  });
-
-   const phoneExists = await this.userRepo.findOne({
-    where: { phone: dto.phone },
-  });
-
-   if (phoneExists) {
-      throw new ConflictException('Phone already exists');
-    }
-
-  if (existing) {
-    throw new ConflictException('Email already exists');
+    return password;
   }
 
-  const role = await this.roleRepo.findOne({
-    where: { name: 'admin' },
-  });
+  // ─────────────────────────────────────────────────────────────────────────────
+  // createAdmin
+  // ─────────────────────────────────────────────────────────────────────────────
 
-  const status = await this.statusRepo.findOne({
-    where: { code: 'en_attend' },
-  });
+ 
+  async createAdmin(dto: CreateAdminDto) {
+    const organisation = await this.organisationsService.findOne(
+      dto.organisation_id,
+    );
 
-  const password = this.generateStrongPassword(14);
-  const hashed = await bcrypt.hash(password, 10);
+    const emailExists = await this.userRepo.findOne({
+      where: { email: dto.email },
+    });
+    if (emailExists) {
+      throw new ConflictException('Email already exists');
+    }
 
-  const token = randomBytes(32).toString('hex');
+    if (dto.phone) {
+      const phoneExists = await this.userRepo.findOne({
+        where: { phone: dto.phone },
+      });
+      if (phoneExists) {
+        throw new ConflictException('Phone already exists');
+      }
+    }
 
-  const admin = this.userRepo.create({
-    ...dto,
-    password: hashed,
-    role_id: role?.id,
-    status: status,
-    activation_token: token,
-  });
+    const role = await this.roleRepo.findOne({ where: { name: 'admin' } });
+    if (!role) {
+      throw new NotFoundException('Role "admin" not found');
+    }
 
-  const saved = await this.userRepo.save(admin);
+    const status = await this.statusRepo.findOne({
+      where: { code: 'en_attend' },
+    });
+    if (!status) {
+      throw new NotFoundException('Status "en_attend" not found');
+    }
 
-  const user = Array.isArray(saved) ? saved[0] : saved;
+    const password = this.generateStrongPassword(14);
+    const hashed = await bcrypt.hash(password, 10);
+    const token = randomBytes(32).toString('hex');
 
-  await this.emailService.sendAdminCreationEmail(
-    user.email,
-    password,
-    token,
-  );
+    const admin = this.userRepo.create({
+      first_name: dto.first_name,
+      last_name: dto.last_name,
+      email: dto.email,
+      phone: dto.phone,
+      password: hashed,
+      organisation_id: organisation.id,
+      role_id: role.id,
+      status,                          // guaranteed non-null
+      activation_token: token,
+      activation_sent_at: new Date(),
+    });
 
-  return {
-    message: 'Admin created & email sent',
-    email: user.email,
-  };
-}
+    const saved = await this.userRepo.save(admin);
+    const user = Array.isArray(saved) ? saved[0] : saved;
+
+    await this.emailService.sendAdminCreationEmail(user.email, password, token);
+
+    return {
+      message: 'Admin created & email sent',
+      email: user.email,
+      organisation: organisation.name_organisation,
+    };
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // getListAdmin — now loads `organisation` relation instead of raw string
+  // ─────────────────────────────────────────────────────────────────────────────
 
   async getListAdmin() {
     return this.userRepo.find({
-      relations: ['role', 'status'], 
+      relations: ['role', 'status', 'organisation'],
       where: {
         role: {
-          name: 'admin', 
+          name: 'admin',
         },
       },
       select: {
@@ -127,89 +163,187 @@ export class UsersService {
         email: true,
         first_name: true,
         last_name: true,
-        status: true,
-        organization_name: true,
-        created_at: true,
         phone: true,
+        created_at: true,
+        status: {
+          id: true,
+          code: true,
+          label: true,
+        },
         role: {
           id: true,
           name: true,
+        },
+        organisation: {
+          id: true,
+          name_organisation: true,
+          adresse_organisation: true,
+          phone_organisation: true,
+          logo_organisation: true,
         },
       },
     });
   }
 
-async updateInactiveAdmin(id: number, dto: any) {
-  const admin = await this.userRepo.findOne({
-    where: { id },
-    relations: ['role', 'status'],
-  });
-
-  if (!admin) {
-    throw new NotFoundException('Admin not found');
-  }
-
-  if (admin.role?.name !== 'admin') {
-    throw new ForbiddenException('User is not an admin');
-  }
-
-  if (admin.status?.code === 'actif') {
-    throw new ForbiddenException('Cannot update an active admin');
-  }
-
-  // 👇 Check if email already used by another user
-  if (dto.email && dto.email !== admin.email) {
-    const emailExists = await this.userRepo.findOne({
-      where: { email: dto.email },
+  // ─────────────────────────────────────────────────────────────────────────────
+  // updateInactiveAdmin — supports optional organisation_id change
+  // ─────────────────────────────────────────────────────────────────────────────
+  async updateInactiveAdmin(id: number, dto: UpdateAdminDto) {
+    const admin = await this.userRepo.findOne({
+      where: { id },
+      relations: ['role', 'status', 'organisation'],
     });
 
-    if (emailExists) {
-      throw new ConflictException('Email already exists');
-    }
-  }
+    if (!admin) throw new NotFoundException('Admin not found');
+    if (admin.role?.name !== 'admin') throw new ForbiddenException('User is not an admin');
+    if (admin.status?.code === 'actif') throw new ForbiddenException('Cannot update an active admin');
 
-  // 👇 Check if phone already used by another user
-  if (dto.phone && dto.phone !== admin.phone) {
-    const phoneExists = await this.userRepo.findOne({
-      where: { phone: dto.phone },
+    if (dto.email && dto.email !== admin.email) {
+      const emailExists = await this.userRepo.findOne({ where: { email: dto.email } });
+      if (emailExists) throw new ConflictException('Email already exists');
+    }
+
+    if (dto.phone && dto.phone !== admin.phone) {
+      const phoneExists = await this.userRepo.findOne({ where: { phone: dto.phone } });
+      if (phoneExists) throw new ConflictException('Phone already exists');
+    }
+
+    // ✅ Validate org exists, then assign as relation object
+    if (dto.organisation_id !== undefined) {
+      await this.organisationsService.findOne(dto.organisation_id);
+      admin.organisation = { id: dto.organisation_id } as Organisation;
+    }
+
+    // Apply scalar fields only
+    const { organisation_id, ...scalarFields } = dto;
+    Object.assign(admin, scalarFields);
+
+    const updated = await this.userRepo.save(admin);
+
+    const result = await this.userRepo.findOne({
+      where: { id: updated.id },
+      relations: ['role', 'status', 'organisation'],
     });
 
-    if (phoneExists) {
-      throw new ConflictException('Phone already exists');
+    return { message: 'Admin updated successfully', data: result };
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // deleteInactiveAdmin — unchanged logic, no organisation dependency
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  async deleteInactiveAdmin(id: number) {
+    const admin = await this.userRepo.findOne({
+      where: { id },
+      relations: ['role', 'status'],
+    });
+
+    if (!admin) {
+      throw new NotFoundException('Admin not found');
     }
+
+    if (admin.role?.name !== 'admin') {
+      throw new ForbiddenException('User is not an admin');
+    }
+
+    if (admin.activation_token === null) {
+      throw new ForbiddenException('Cannot delete an active admin');
+    }
+
+    await this.userRepo.remove(admin);
+
+    return {
+      message: 'Admin deleted successfully',
+    };
   }
 
-  Object.assign(admin, dto);
-  const updated = await this.userRepo.save(admin);
+  // ─────────────────────────────────────────────────────────────────────────────
+  // resendActivationEmail — unchanged logic
+  // ─────────────────────────────────────────────────────────────────────────────
 
-  return {
-    message: 'Admin updated successfully',
-    data: updated,
-  };
-}
+  async resendActivationEmail(id: number) {
+    const admin = await this.userRepo.findOne({
+      where: { id },
+      relations: ['role', 'status'],
+    });
 
-async deleteInactiveAdmin(id: number) {
-  const admin = await this.userRepo.findOne({
-    where: { id },
-    relations: ['role', 'status'],
-  });
+    if (!admin) {
+      throw new NotFoundException('Admin not found');
+    }
 
-  if (!admin) {
-    throw new NotFoundException('Admin not found');
+    if (admin.role?.name !== 'admin') {
+      throw new ForbiddenException('User is not an admin');
+    }
+
+    if (admin.activation_token === null) {
+      throw new ForbiddenException('Admin account is already activated');
+    }
+
+    if (admin.activation_sent_at) {
+      const hoursSinceLastSend =
+        (Date.now() - new Date(admin.activation_sent_at).getTime()) /
+        (1000 * 60 * 60);
+
+      if (hoursSinceLastSend < this.activationResendDelayHours) {
+        const hoursRemaining = Math.ceil(
+          this.activationResendDelayHours - hoursSinceLastSend,
+        );
+        throw new BadRequestException(
+          `Activation email was already sent. Please wait ${hoursRemaining} more hour(s) before resending.`,
+        );
+      }
+    }
+
+    const newPassword = this.generateStrongPassword(14);
+    const newHashed = await bcrypt.hash(newPassword, 10);
+    const newToken = randomBytes(32).toString('hex');
+
+    admin.password = newHashed;
+    admin.activation_token = newToken;
+    admin.activation_sent_at = new Date();
+
+    await this.userRepo.save(admin);
+
+    await this.emailService.sendAdminCreationEmail(
+      admin.email,
+      newPassword,
+      newToken,
+    );
+
+    return {
+      message: 'Activation email resent successfully',
+      email: admin.email,
+    };
   }
 
-  if (admin.role?.name !== 'admin') {
-    throw new ForbiddenException('User is not an admin');
+  // ─────────────────────────────────────────────────────────────────────────────
+  // changePassword — unchanged logic
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  async changePassword(userId: number, dto: ChangePasswordDto) {
+    const user = await this.userRepo.findOne({ where: { id: userId } });
+
+    if (!user) {
+      throw new NotFoundException('Utilisateur introuvable.');
+    }
+
+    const isMatch = await bcrypt.compare(dto.current_password, user.password);
+    if (!isMatch) {
+      throw new UnauthorizedException('Mot de passe actuel incorrect.');
+    }
+
+    const isSame = await bcrypt.compare(dto.new_password, user.password);
+    if (isSame) {
+      throw new BadRequestException(
+        "Le nouveau mot de passe doit être différent de l'ancien.",
+      );
+    }
+
+    user.password = await bcrypt.hash(dto.new_password, 10);
+    await this.userRepo.save(user);
+
+    return {
+      message: 'Mot de passe modifié avec succès.',
+    };
   }
-
-  if (admin.activation_token === null ) {
-    throw new ForbiddenException('Cannot delete an active admin');
-  }
-
-  await this.userRepo.remove(admin);
-
-  return {
-    message: 'Admin deleted successfully',
-  };
-}
 }

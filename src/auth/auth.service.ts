@@ -29,7 +29,7 @@ export class AuthService {
     const user = await this.usersService.findByEmail(email);
 
     if (!user || !(await bcrypt.compare(password, user.password))) {
-      throw new UnauthorizedException('Invalid credentials');
+      throw new UnauthorizedException('Identifiants invalides');
     }
 
     const allowedRoles = ['admin', 'super_admin'];
@@ -47,8 +47,15 @@ export class AuthService {
       access_token: this.jwtService.sign({
         sub: user.id,  
         role: user.role.name,
-        email: user.email,
+        email: user.email, 
       }),
+       user: {                    
+      id: user.id,
+      firstName: user.first_name,  
+      lastName: user.last_name,
+      email: user.email,
+      role: user.role.name,
+    },
     };
   }
 

@@ -27,7 +27,7 @@ export async function seedSuperAdmin(dataSource: DataSource) {
   if (!role) throw new Error('Role super_admin not found');
   if (!status) throw new Error('Status actif not found');
 
-  const hashedPassword = await bcrypt.hash('Super@12345', 10);
+  const hashedPassword = await bcrypt.hash('Super@1234', 10);
 
   const user = userRepo.create({
     first_name: 'Super',

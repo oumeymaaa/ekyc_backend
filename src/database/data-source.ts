@@ -3,6 +3,7 @@ import * as dotenv from 'dotenv';
 import { User } from '../users/user.entity';
 import { Role } from '../roles/role.entity';
 import { UserStatus } from '../users/userstatus.entity';
+import { Organisation } from '../organisation/organisation.entity';
 
 dotenv.config();
 
@@ -13,7 +14,7 @@ export const AppDataSource = new DataSource({
   username: process.env.DB_USER     || 'postgres',
   password: process.env.DB_PASSWORD || 'postgres',
   database: process.env.DB_NAME     || 'ekyc',
-  entities: [User, Role, UserStatus],
+  entities: [User, Role, UserStatus, Organisation],
   migrations: ['src/database/migrations/*.ts'],
   synchronize: false,
 });
