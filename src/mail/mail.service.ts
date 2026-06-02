@@ -95,32 +95,140 @@ export class EmailService {
   });
   }
 
-  async sendPasswordResetEmail(email: string, token: string) {
+  async sendPasswordResetEmail(email: string, token: string, otp: string) {
   const resetLink = `${process.env.FRONTEND_URL}/reset-password?token=${token}`;
 
   await this.mailerService.sendMail({
     to: email,
     subject: 'Réinitialisation de votre mot de passe',
-    html: `
-      <h2>Réinitialisation du mot de passe</h2>
-      <p>Vous avez demandé la réinitialisation de votre mot de passe.</p>
-      <p>Cliquez sur le lien ci-dessous pour définir un nouveau mot de passe :</p>
-      <a href="${resetLink}" style="
-        display: inline-block;
-        padding: 12px 24px;
-        background: #3b82f6;
-        color: white;
-        border-radius: 6px;
-        text-decoration: none;
-        font-weight: bold;
-      ">
-        Réinitialiser mon mot de passe
-      </a>
-      <p>Ce lien est valable pendant <strong>1 heure</strong>.</p>
-      <p>Si vous n'avez pas fait cette demande, ignorez cet email.</p>
+      html: `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="UTF-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    </head>
+    <body style="margin:0; padding:0; font-family: Arial, sans-serif;">
+      <table width="100%" cellpadding="0" cellspacing="0" border="0">
+        <tr>
+          <td align="center" style="padding: 40px 20px;">
+            <table width="600" cellpadding="0" cellspacing="0" border="0" style="max-width:600px;">
+
+              <tr>
+                <td style="padding: 0 0 16px 0;">
+                  <h2 style="margin:0; color:#111827;">Réinitialisation du mot de passe</h2>
+                </td>
+              </tr>
+
+              <tr>
+                <td style="padding: 0 0 12px 0; color:#374151;">
+                  Vous avez demandé la réinitialisation de votre mot de passe.
+                </td>
+              </tr>
+
+              <tr>
+                <td style="padding: 0 0 24px 0; color:#374151;">
+                  Cliquez sur le bouton ci-dessous pour définir un nouveau mot de passe :
+                </td>
+              </tr>
+
+              <tr>
+                <td align="center" style="padding: 0 0 24px 0;">
+                  <a href="${resetLink}"
+                    target="_blank"
+                    style="
+                      display: inline-block;
+                      padding: 13px 30px;
+                      background-color: #3b82f6;
+                      color: #ffffff !important;
+                      text-decoration: none;
+                      font-family: Arial, sans-serif;
+                      font-size: 15px;
+                      font-weight: bold;
+                      border-radius: 6px;
+                    ">
+                    Réinitialiser mon mot de passe
+                  </a>
+                </td>
+              </tr>
+
+              <tr>
+                <td style="padding: 24px 0 12px 0; border-top: 1px solid #e5e7eb;">
+                  <p style="margin:0 0 8px 0; color:#374151; font-size:14px;">
+                    <strong>Code de vérification (OTP) :</strong>
+                  </p>
+                  <div style="
+                    background: #f3f4f6;
+                    border: 2px dashed #3b82f6;
+                    border-radius: 8px;
+                    padding: 16px;
+                    text-align: center;
+                    margin: 8px 0;
+                  ">
+                    <span style="
+                      font-size: 32px;
+                      letter-spacing: 8px;
+                      color: #1a56db;
+                      font-family: monospace;
+                      font-weight: bold;
+                    ">${otp}</span>
+                  </div>
+                  <p style="margin:8px 0 0 0; color:#6b7280; font-size:13px;">
+                    Saisissez ce code sur la page de réinitialisation après avoir cliqué sur le lien.
+                  </p>
+                </td>
+              </tr>
+
+              <tr>
+                <td style="padding: 12px 0 0 0; color:#374151; font-size:13px;">
+                  Ce lien et ce code sont valables pendant <strong>1 heure</strong>.
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+      </table>
+    </body>
+    </html>
     `,
   });
 }
+
+  async sendChangePasswordOtp(email: string, otp: string) {
+    await this.mailerService.sendMail({
+      to: email,
+      subject: 'Code de vérification — Modification du mot de passe',
+      html: `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+          <h2 style="color: #111827;">Modification du mot de passe</h2>
+          <p style="color: #374151;">Vous avez demandé la modification de votre mot de passe.</p>
+          <p style="color: #374151;">Voici votre code de vérification :</p>
+          <div style="
+            background: #f3f4f6;
+            border: 2px dashed #3b82f6;
+            border-radius: 8px;
+            padding: 24px;
+            text-align: center;
+            margin: 24px 0;
+          ">
+            <span style="
+              font-size: 36px;
+              letter-spacing: 8px;
+              color: #1a56db;
+              font-family: monospace;
+              font-weight: bold;
+            ">${otp}</span>
+          </div>
+          <p style="color: #6b7280; font-size: 13px;">
+            Ce code est valable pendant 10 minutes.
+          </p>
+          <p style="color: #ef4444; font-size: 13px;">
+            Si vous n'êtes pas à l'origine de cette demande, veuillez ignorer cet email et contacter votre administrateur.
+          </p>
+        </div>
+      `,
+    });
+  }
 
   async sendClientAccessCode(
     email: string,

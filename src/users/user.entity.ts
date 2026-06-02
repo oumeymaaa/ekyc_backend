@@ -67,4 +67,16 @@ export class User {
 
   @Column({ type: 'timestamp', nullable: true })
   reset_password_expires: Date | null;
+
+  @Column({ type: 'varchar', nullable: true })
+  reset_otp_hash: string | null;
+
+  @Column({ type: 'timestamp', nullable: true })
+  reset_otp_expires: Date | null;
+
+  @Column({ type: 'varchar', nullable: true })
+  change_otp_hash: string | null;
+
+  @Column({ type: 'timestamp', nullable: true })
+  change_otp_expires: Date | null;
 }

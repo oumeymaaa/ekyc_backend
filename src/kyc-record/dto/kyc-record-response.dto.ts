@@ -1,9 +1,9 @@
 // src/kyc-record/dto/kyc-record-response.dto.ts
-import { CinData } from '../kyc-record.entity';
+import {KycStatus, CinData } from '../kyc-record.entity';
 
 export class KycRecordResponseDto {
   id: number;
-  status: string;
+  status: KycStatus | undefined;          // use the enum, not plain string
 
   // OCR extracted data from the CIN document
   cinData: CinData | null;

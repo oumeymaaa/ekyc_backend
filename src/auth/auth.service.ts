@@ -11,7 +11,7 @@ import { Repository } from 'typeorm';
 import { User } from '../users/user.entity';
 import { UserStatus } from '../users/userstatus.entity';
 import { EmailService } from '../mail/mail.service';
-import { randomBytes } from 'crypto';
+import { randomBytes, randomInt } from 'crypto';
 
 @Injectable()
 export class AuthService {
@@ -25,39 +25,47 @@ export class AuthService {
     private emailService: EmailService,
   ) {}
 
-  async login(email: string, password: string) {
-    const user = await this.usersService.findByEmail(email);
+   async login(email: string, password: string) {
+  const user = await this.usersService.findByEmail(email);
 
-    if (!user || !(await bcrypt.compare(password, user.password))) {
-      throw new UnauthorizedException('Identifiants invalides');
-    }
+  if (!user || !(await bcrypt.compare(password, user.password))) {
+    throw new UnauthorizedException('Identifiants invalides');
+  }
 
-    const allowedRoles = ['admin', 'super_admin'];
-    if (!allowedRoles.includes(user.role.name)) {
-      throw new UnauthorizedException('Access denied');
-    }
+  const allowedRoles = ['admin', 'super_admin'];
+  if (!allowedRoles.includes(user.role.name)) {
+    throw new UnauthorizedException('Access denied');
+  }
 
-    if (user.role.name === 'admin' && user.activation_token !== null) {
-      throw new UnauthorizedException(
-        "Votre compte n'est pas encore activé. Veuillez vérifier votre email.",
-      );
-    }
+  if (user.role.name === 'admin' && user.activation_token !== null) {
+    throw new UnauthorizedException(
+      "Votre compte n'est pas encore activé. Veuillez vérifier votre email.",
+    );
+  }
 
-    return {
-      access_token: this.jwtService.sign({
-        sub: user.id,  
-        role: user.role.name,
-        email: user.email, 
-      }),
-       user: {                    
+  return {
+    access_token: this.jwtService.sign({
+      sub: user.id,
+      role: user.role.name,
+      email: user.email,
+    }),
+    user: {
       id: user.id,
-      firstName: user.first_name,  
+      firstName: user.first_name,
       lastName: user.last_name,
       email: user.email,
       role: user.role.name,
+      phone: user.phone,
+      organisation: user.organisation
+        ? {
+            id: user.organisation.id,
+            name_organisation: user.organisation.name_organisation,  
+            logo_organisation: user.organisation.logo_organisation,  
+          }
+        : null,
     },
-    };
-  }
+  };
+}
 
   async logout(user: any) {
     return { message: 'Logged out successfully' };
@@ -98,13 +106,40 @@ export class AuthService {
     const expires = new Date();
     expires.setHours(expires.getHours() + 1);
 
+    // Generate 6-digit OTP
+    const otp = String(randomInt(100000, 999999));
+    const otpHash = await bcrypt.hash(otp, 10);
+
     user.reset_password_token = token;
     user.reset_password_expires = expires;
+    user.reset_otp_hash = otpHash;
+    user.reset_otp_expires = expires;
     await this.userRepo.save(user);
 
-    await this.emailService.sendPasswordResetEmail(user.email, token);
+    await this.emailService.sendPasswordResetEmail(user.email, token, otp);
 
     return { message: 'Email de réinitialisation envoyé' };
+  }
+
+  async verifyOtp(token: string, otp: string) {
+    const user = await this.userRepo.findOne({
+      where: { reset_password_token: token },
+    });
+
+    if (!user) {
+      throw new BadRequestException('Token invalide');
+    }
+
+    if (!user.reset_otp_hash || !user.reset_otp_expires || user.reset_otp_expires < new Date()) {
+      throw new BadRequestException('Code OTP expiré. Veuillez refaire une demande.');
+    }
+
+    const isValid = await bcrypt.compare(otp, user.reset_otp_hash);
+    if (!isValid) {
+      throw new BadRequestException('Code OTP invalide');
+    }
+
+    return { message: 'OTP vérifié avec succès' };
   }
 
   async resetPassword(token: string, newPassword: string, confirmPassword: string) {

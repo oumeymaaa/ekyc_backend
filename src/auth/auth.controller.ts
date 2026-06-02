@@ -33,7 +33,13 @@ export class AuthController {
     return this.authService.forgotPassword(body.email);
   }
 
-  // 👇 Step 2 — Reset password with token
+  // 👇 Step 2 — Verify OTP
+  @Post('verify-otp')
+  verifyOtp(@Body() body: any) {
+    return this.authService.verifyOtp(body.token, body.otp);
+  }
+
+  // 👇 Step 3 — Reset password with token
 @Post('reset-password')
 resetPassword(@Body() body: any) {
   return this.authService.resetPassword(body.token, body.password, body.confirm_password);

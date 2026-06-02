@@ -27,7 +27,7 @@ export class UsersController {
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles('super_admin')
+  @Roles('super_admin', 'admin')
   @Patch('update-admin/:id')
   updateInactiveAdmin(
     @Param('id', ParseIntPipe) id: number,
@@ -47,5 +47,24 @@ export class UsersController {
   @Post('change-password')
   changePassword(@Req() req: any, @Body() dto: ChangePasswordDto) {
     return this.usersService.changePassword(req.user.userId, dto);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Post('change-password/request-otp')
+  requestChangePasswordOtp(@Req() req: any, @Body() body: any) {
+    return this.usersService.requestChangePasswordOtp(
+      req.user.userId,
+      body.current_password,
+    );
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Post('change-password/confirm')
+  confirmChangePassword(@Req() req: any, @Body() body: any) {
+    return this.usersService.confirmChangePassword(
+      req.user.userId,
+      body.otp,
+      body.new_password,
+    );
   }
 }

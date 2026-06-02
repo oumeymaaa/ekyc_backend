@@ -127,7 +127,10 @@ export class KycRecordService {
       );
     }
 
-    // Verify ownership
+    // ✅ Guard: client relation must be loaded
+    if (!record.client) {
+      throw new NotFoundException(`Client not found for KYC record ${kycId}`);
+    }
     if (record.client.created_by !== agentId) {
       throw new NotFoundException(`KYC record not found`);
     }
@@ -137,6 +140,10 @@ export class KycRecordService {
     const updated = await this.kycRepo.save(record);
     // ✅ IF REJECTED => resend access code + soft delete the KYC record
     if (dto.status === KycStatus.INVALID) {
+      // ✅ Guard: client must still be present after save
+      if (!updated.client) {
+        throw new NotFoundException(`Client not found after KYC update`);
+      }
       await this.clientService.resendAccessCode({
         email: updated.client.email,
         send_via: 1,
@@ -164,15 +171,18 @@ export class KycRecordService {
   // regardless of what the status column says, so the frontend always
   // sees a consistent status value.
   private toDto(record: KycRecord): KycRecordResponseDto {
+        if (!record.client) {
+      throw new NotFoundException(`Client relation missing on KYC record ${record.id}`);
+    }
     const status = record.deletedAt ? KycStatus.INVALID : record.status;
     return {
-      id: record.id,
-      status,
+      id: record.id as number,                   // ✅ cast: PrimaryGeneratedColumn is number after save
+      status: status as KycStatus,
       cinData: record.cinData ?? null,
       cinImageUrl: record.cinImageUrl ?? null,
       selfieImageUrl: record.selfieImageUrl ?? null,
       facialMatchingScore: record.facialMatchingScore ?? null,
-      createdAt: record.createdAt,
+      createdAt: record.createdAt as Date,        // ✅ cast: always set by TypeORM
       client: {
         id: record.client.id,
         firstName: record.client.first_name,
